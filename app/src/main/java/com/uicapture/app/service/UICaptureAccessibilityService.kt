@@ -71,12 +71,15 @@ fun captureCallback(
 class UICaptureAccessibilityService : AccessibilityService() {
 
     // Foreground window tracking
+    @Volatile
     var lastActivePackageName: String = ""
         internal set
 
+    @Volatile
     var lastActiveClassName: String = ""
         internal set
 
+    @Volatile
     var lastActiveWindowTitle: String = ""
         internal set
 
@@ -148,6 +151,10 @@ class UICaptureAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        val pkg = event.packageName?.toString()
+        if (pkg != null && pkg.equals(ScreenTreeBuilder.OVERLAY_PACKAGE, ignoreCase = true)) {
+            return
+        }
         updateActiveWindowState(
             packageName = event.packageName,
             className = event.className,
@@ -156,8 +163,9 @@ class UICaptureAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Updates active window state tracking, skipping the app's own overlay package
-     * so that touching the floating bubble does not overwrite target application metadata.
+     * Updates active window state tracking, returning early for the app's own overlay package
+     * so that touching the floating bubble does not overwrite target application metadata
+     * (package name, class name, or window title).
      */
     internal fun updateActiveWindowState(
         packageName: CharSequence?,
@@ -165,7 +173,11 @@ class UICaptureAccessibilityService : AccessibilityService() {
         text: List<CharSequence?>? = null
     ) {
         val pkg = packageName?.toString()
-        if (!pkg.isNullOrBlank() && !pkg.equals(ScreenTreeBuilder.OVERLAY_PACKAGE, ignoreCase = true)) {
+        if (pkg != null && pkg.equals(ScreenTreeBuilder.OVERLAY_PACKAGE, ignoreCase = true)) {
+            return
+        }
+
+        if (!pkg.isNullOrBlank()) {
             lastActivePackageName = pkg
         }
 
@@ -213,9 +225,12 @@ class UICaptureAccessibilityService : AccessibilityService() {
         val targetPackage: String
         val resolution: String
         try {
-            targetPackage = rootNode.packageName?.toString()
-                ?.ifBlank { lastActivePackageName }
-                ?: lastActivePackageName.ifBlank { "unknown" }
+            val nodePkg = rootNode.packageName?.toString()
+            targetPackage = if (nodePkg.isNullOrBlank() || nodePkg.equals(ScreenTreeBuilder.OVERLAY_PACKAGE, ignoreCase = true)) {
+                lastActivePackageName.ifBlank { "unknown" }
+            } else {
+                nodePkg
+            }
 
             resolution = resolveScreenResolution(rootNode, context)
             treeResult = treeBuilder(rootNode)
@@ -264,6 +279,20 @@ class UICaptureAccessibilityService : AccessibilityService() {
                 }
             }
         }
+    }
+
+    /**
+     * Positional 2-parameter capture overload defaulting to takeScreenshot = true.
+     */
+    fun captureActiveScreen(
+        onSuccess: (ScreenCaptureData, Bitmap?) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        captureActiveScreen(
+            takeScreenshot = true,
+            onSuccess = onSuccess,
+            onError = onError
+        )
     }
 
     /**
@@ -482,6 +511,20 @@ class UICaptureAccessibilityService : AccessibilityService() {
                 return
             }
             currentInstance.captureActiveScreen(context, takeScreenshot, callback)
+        }
+
+        /**
+         * App-wide positional 2-parameter capture overload defaulting to takeScreenshot = true.
+         */
+        fun captureActiveScreen(
+            onSuccess: (ScreenCaptureData, Bitmap?) -> Unit,
+            onError: (String) -> Unit
+        ) {
+            captureActiveScreen(
+                takeScreenshot = true,
+                onSuccess = onSuccess,
+                onError = onError
+            )
         }
 
         /**

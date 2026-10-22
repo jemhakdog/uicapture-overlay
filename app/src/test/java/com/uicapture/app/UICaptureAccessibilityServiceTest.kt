@@ -210,16 +210,31 @@ class UICaptureAccessibilityServiceTest {
             text = listOf("Settings")
         )
         assertEquals("com.android.settings", service.lastActivePackageName)
+        assertEquals("com.android.settings.SettingsActivity", service.lastActiveClassName)
+        assertEquals("Settings", service.lastActiveWindowTitle)
 
-        // Event from app's floating bubble / overlay should be ignored for package name
+        // Event from app's floating bubble / overlay should return early immediately
+        // and NEVER overwrite package name, class name, or window title.
         service.updateActiveWindowState(
             packageName = "com.uicapture.app",
             className = "com.uicapture.app.overlay.BubbleView",
             text = listOf("Overlay Bubble")
         )
 
-        // Package name remains target application
+        // All state fields remain from target application
         assertEquals("com.android.settings", service.lastActivePackageName)
+        assertEquals("com.android.settings.SettingsActivity", service.lastActiveClassName)
+        assertEquals("Settings", service.lastActiveWindowTitle)
+
+        // Case-insensitive check
+        service.updateActiveWindowState(
+            packageName = "COM.UICAPTURE.APP",
+            className = "com.uicapture.app.ui.MainActivity",
+            text = listOf("UICapture Dashboard")
+        )
+        assertEquals("com.android.settings", service.lastActivePackageName)
+        assertEquals("com.android.settings.SettingsActivity", service.lastActiveClassName)
+        assertEquals("Settings", service.lastActiveWindowTitle)
     }
 
     @Test
@@ -451,6 +466,30 @@ class UICaptureAccessibilityServiceTest {
     // ---------------------------------------------------------------------
 
     @Test
+    fun testTargetPackageResolutionFallsBackWhenRootIsOverlayPackage() {
+        val baseDir = tempFolder.newFolder("overlay_root_fallback")
+        val service = UICaptureAccessibilityService()
+        val mockRoot = TestTreeNode(packageName = "com.uicapture.app")
+
+        service.rootNodeProvider = { mockRoot }
+        service.hierarchyExporter = HierarchyExporter(baseDir)
+        service.ioExecutor = Executor { it.run() }
+        service.mainDispatcher = { it() }
+        service.lastActivePackageName = "com.target.foreground"
+
+        var capturedPackage: String? = null
+        service.captureActiveScreen(
+            takeScreenshot = false,
+            onSuccess = { data, _ ->
+                capturedPackage = data.packageName
+            },
+            onError = { fail("Should not fail: $it") }
+        )
+
+        assertEquals("com.target.foreground", capturedPackage)
+    }
+
+    @Test
     fun testCompanionCaptureDelegatesToActiveInstance() {
         val baseDir = tempFolder.newFolder("companion_captures")
         val service = UICaptureAccessibilityService()
@@ -475,6 +514,64 @@ class UICaptureAccessibilityServiceTest {
         )
 
         assertTrue(companionSuccess)
+    }
+
+    @Test
+    fun testPositionalTwoArgumentCaptureActiveScreenOnService() {
+        val baseDir = tempFolder.newFolder("positional_service_captures")
+        val service = UICaptureAccessibilityService()
+        val mockRoot = TestTreeNode(packageName = "com.positional.service")
+
+        service.rootNodeProvider = { mockRoot }
+        service.hierarchyExporter = HierarchyExporter(baseDir)
+        service.ioExecutor = Executor { it.run() }
+        service.mainDispatcher = { it() }
+        service.screenshotProvider = { callback -> callback(null) }
+
+        var successCalled = false
+        // Positional 2-argument call: captureActiveScreen({ data, bmp -> ... }, { err -> ... })
+        service.captureActiveScreen(
+            { data, screenshot ->
+                successCalled = true
+                assertEquals("com.positional.service", data.packageName)
+                assertNull(screenshot)
+            },
+            { err ->
+                fail("Positional capture on service should not fail: $err")
+            }
+        )
+
+        assertTrue(successCalled)
+    }
+
+    @Test
+    fun testPositionalTwoArgumentCaptureActiveScreenOnCompanion() {
+        val baseDir = tempFolder.newFolder("positional_companion_captures")
+        val service = UICaptureAccessibilityService()
+        val mockRoot = TestTreeNode(packageName = "com.positional.companion")
+
+        service.rootNodeProvider = { mockRoot }
+        service.hierarchyExporter = HierarchyExporter(baseDir)
+        service.ioExecutor = Executor { it.run() }
+        service.mainDispatcher = { it() }
+        service.screenshotProvider = { callback -> callback(null) }
+
+        UICaptureAccessibilityService.setInstanceForTesting(service)
+
+        var successCalled = false
+        // Positional 2-argument call: UICaptureAccessibilityService.captureActiveScreen({ data, bmp -> ... }, { err -> ... })
+        UICaptureAccessibilityService.captureActiveScreen(
+            { data, screenshot ->
+                successCalled = true
+                assertEquals("com.positional.companion", data.packageName)
+                assertNull(screenshot)
+            },
+            { err ->
+                fail("Positional capture on companion should not fail: $err")
+            }
+        )
+
+        assertTrue(successCalled)
     }
 
     // ---------------------------------------------------------------------
