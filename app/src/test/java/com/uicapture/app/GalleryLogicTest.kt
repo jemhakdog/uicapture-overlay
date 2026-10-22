@@ -102,7 +102,7 @@ class GalleryLogicTest {
         val sessionDir = File(baseDir, "cap_1729567890000_com_example_fallback").apply { mkdirs() }
 
         val element = UIElement(
-            id = 1,
+            id = "1",
             className = "android.widget.Button",
             text = "Click me",
             bounds = "[10,20][100,200]",

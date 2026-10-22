@@ -113,7 +113,7 @@ class UICaptureAccessibilityService : AccessibilityService() {
         }
     }
 
-    override fun onServiceConnected() {
+    public override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         _isServiceRunningState.value = true
