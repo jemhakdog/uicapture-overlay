@@ -170,15 +170,20 @@ class FloatingOverlayController(
         }
     }
 
-    internal var pulseAnimator: (View) -> Unit = { view ->
+    internal var pulseAnimator: () -> Unit = {
+        val target = bubbleContainer ?: rootView
+        target?.let { animatePulse(it) }
+    }
+
+    private fun animatePulse(target: View) {
         try {
-            view.animate()
+            target.animate()
                 .scaleX(1.15f)
                 .scaleY(1.15f)
                 .setDuration(120L)
                 .withEndAction {
                     try {
-                        view.animate()
+                        target.animate()
                             .scaleX(1.0f)
                             .scaleY(1.0f)
                             .setDuration(120L)
@@ -369,14 +374,14 @@ class FloatingOverlayController(
      */
     fun performCaptureTap() {
         hapticFeedbackProvider()
-        bubbleContainer?.let { pulseAnimator(it) } ?: rootView?.let { pulseAnimator(it) }
+        pulseAnimator()
 
         captureTrigger(
             { data, _ ->
                 incrementCounter()
                 val message = OverlayMath.formatSuccessToast(data.elementCount, data.packageName)
                 toastDisplayer(message)
-                bubbleContainer?.let { pulseAnimator(it) } ?: rootView?.let { pulseAnimator(it) }
+                pulseAnimator()
             },
             { errorMessage ->
                 val displayError = if (errorMessage.contains(UICaptureAccessibilityService.ERROR_SERVICE_NOT_RUNNING)) {
