@@ -99,6 +99,15 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
+ * View presentation mode in the capture gallery: all flat chronological captures,
+ * or grouped and filtered by target application.
+ */
+enum class GalleryViewMode {
+    ALL,
+    BY_APP
+}
+
+/**
  * Gallery screen that scans and lists saved captures from `Download/UICaptures/`,
  * with full screenshot thumbnails, element counts, detail dialog, raw JSON/XML inspection,
  * and quick share/export actions.
@@ -118,6 +127,7 @@ fun CapturesGalleryScreen(
     var searchQuery by remember { mutableStateOf("") }
     var selectedSession by remember { mutableStateOf<CaptureSessionItem?>(null) }
     var sessionToDelete by remember { mutableStateOf<CaptureSessionItem?>(null) }
+    var viewMode by remember { mutableStateOf(GalleryViewMode.ALL) }
 
     fun refreshSessions() {
         coroutineScope.launch {
@@ -136,6 +146,14 @@ fun CapturesGalleryScreen(
 
     val filteredSessions = remember(sessions, searchQuery) {
         GalleryLogic.filterSessions(sessions, searchQuery)
+    }
+
+    val appGroups = remember(sessions) {
+        GalleryLogic.groupSessionsByApp(sessions)
+    }
+
+    val filteredAppGroups = remember(appGroups, searchQuery) {
+        GalleryLogic.filterAppGroups(appGroups, searchQuery)
     }
 
     Scaffold(
@@ -158,7 +176,7 @@ fun CapturesGalleryScreen(
                                 color = PrimaryBlue.copy(alpha = 0.15f)
                             ) {
                                 Text(
-                                    text = "${filteredSessions.size}",
+                                    text = if (viewMode == GalleryViewMode.ALL) "${filteredSessions.size}" else "${filteredAppGroups.size} apps",
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
@@ -176,6 +194,22 @@ fun CapturesGalleryScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = {
+                            if (sessions.isNotEmpty()) {
+                                coroutineScope.launch {
+                                    val zipFile = withContext(Dispatchers.IO) {
+                                        GalleryLogic.exportAllToZip(baseDirectory, sessions)
+                                    }
+                                    shareZipFile(context, zipFile, "Export All Captures (.zip)")
+                                }
+                            } else {
+                                Toast.makeText(context, "No captures to export", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    ) {
+                        Icon(imageVector = Icons.Default.Share, contentDescription = "Export All (.zip)")
+                    }
                     IconButton(onClick = { refreshSessions() }) {
                         Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh")
                     }
@@ -217,6 +251,28 @@ fun CapturesGalleryScreen(
                 )
             )
 
+            // View Mode TabRow: "All Captures" vs "View by App"
+            TabRow(
+                selectedTabIndex = if (viewMode == GalleryViewMode.ALL) 0 else 1,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(12.dp)),
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                contentColor = PrimaryBlue
+            ) {
+                Tab(
+                    selected = viewMode == GalleryViewMode.ALL,
+                    onClick = { viewMode = GalleryViewMode.ALL },
+                    text = { Text("All Captures (${filteredSessions.size})", fontWeight = FontWeight.SemiBold) }
+                )
+                Tab(
+                    selected = viewMode == GalleryViewMode.BY_APP,
+                    onClick = { viewMode = GalleryViewMode.BY_APP },
+                    text = { Text("View by App (${filteredAppGroups.size})", fontWeight = FontWeight.SemiBold) }
+                )
+            }
+
             // Content Area
             Box(
                 modifier = Modifier
@@ -235,7 +291,7 @@ fun CapturesGalleryScreen(
                             modifier = Modifier.align(Alignment.Center)
                         )
                     }
-                    filteredSessions.isEmpty() -> {
+                    viewMode == GalleryViewMode.ALL && filteredSessions.isEmpty() -> {
                         Column(
                             modifier = Modifier
                                 .align(Alignment.Center)
@@ -254,6 +310,54 @@ fun CapturesGalleryScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        }
+                    }
+                    viewMode == GalleryViewMode.BY_APP && filteredAppGroups.isEmpty() -> {
+                        Column(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(32.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Search,
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                            )
+                            Text(
+                                text = "No apps matching '$searchQuery'",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    viewMode == GalleryViewMode.BY_APP -> {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                start = 16.dp,
+                                end = 16.dp,
+                                top = 8.dp,
+                                bottom = 24.dp
+                            )
+                        ) {
+                            items(filteredAppGroups, key = { it.packageName }) { group ->
+                                AppGroupCard(
+                                    group = group,
+                                    onSessionClick = { selectedSession = it },
+                                    onExportAppZip = {
+                                        coroutineScope.launch {
+                                            val zipFile = withContext(Dispatchers.IO) {
+                                                GalleryLogic.exportAppToZip(group.packageName, baseDirectory, group.sessions)
+                                            }
+                                            shareZipFile(context, zipFile, "Export ${group.appName} Captures")
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
                     else -> {
@@ -550,6 +654,213 @@ private fun CaptureSessionCard(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * Card representing a target application with all its recorded capture sessions,
+ * element aggregates, horizontal screenshot preview row, and one-tap app ZIP export.
+ */
+@Composable
+private fun AppGroupCard(
+    group: com.uicapture.app.util.AppCaptureGroup,
+    onSessionClick: (CaptureSessionItem) -> Unit,
+    onExportAppZip: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // Header: App Title, Package Name, Badges
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = group.appName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = group.packageName,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = PrimaryBlue.copy(alpha = 0.12f)
+                    ) {
+                        Text(
+                            text = "${group.sessions.size} screens",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryBlue
+                        )
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = AccentCyan.copy(alpha = 0.12f)
+                    ) {
+                        Text(
+                            text = "${group.totalElements} elms",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = AccentCyan
+                        )
+                    }
+                }
+            }
+
+            // Horizontal preview row of recorded sessions for this app
+            Text(
+                text = "Captured Layouts & Screens (${group.sessions.size}):",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                group.sessions.forEach { session ->
+                    AppSessionMiniCard(
+                        session = session,
+                        onClick = { onSessionClick(session) }
+                    )
+                }
+            }
+
+            // Export action row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Button(
+                    onClick = onExportAppZip,
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Export ${group.appName} (.zip)",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Compact preview thumbnail card for a single captured layout inside [AppGroupCard].
+ */
+@Composable
+private fun AppSessionMiniCard(
+    session: CaptureSessionItem,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var thumbnailBitmap by remember(session.screenshotFile) { mutableStateOf<ImageBitmap?>(null) }
+
+    LaunchedEffect(session.screenshotFile) {
+        val file = session.screenshotFile
+        if (file != null && file.exists()) {
+            thumbnailBitmap = withContext(Dispatchers.IO) {
+                loadThumbnailBitmap(file, targetDimension = 140)
+            }
+        }
+    }
+
+    Card(
+        modifier = modifier
+            .width(110.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(130.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                val bmp = thumbnailBitmap
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp,
+                        contentDescription = "Screen thumbnail",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                } else {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Image,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Text(
+                            text = "${session.elementCount} elms",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 9.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Text(
+                text = GalleryLogic.formatRelativeTime(session.timestamp),
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
         }
     }
 }
@@ -866,12 +1177,36 @@ private fun ScreenshotTab(file: File?) {
                 )
             }
         } else {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    text = "No screenshot available for this capture session.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Image,
+                        contentDescription = null,
+                        modifier = Modifier.size(54.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                    )
+                    Text(
+                        text = "No Screenshot Available",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "The UI elements and XML/JSON trees were captured, but no screenshot image was recorded.\n\nTip: In Android 11+, please make sure 'UICapture Accessibility Service' is enabled in Settings -> Accessibility with screenshot permissions.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        lineHeight = 18.sp
+                    )
+                }
             }
         }
     }
@@ -990,5 +1325,32 @@ fun openInFiles(context: Context, directory: File) {
         } catch (_: Throwable) {
             Toast.makeText(context, "Directory: ${directory.absolutePath}", Toast.LENGTH_LONG).show()
         }
+    }
+}
+
+/**
+ * Dispatches an intent to share or export an aggregated ZIP archive.
+ */
+fun shareZipFile(context: Context, zipFile: File, chooserTitle: String = "Share Capture Archive") {
+    try {
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            zipFile
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/zip"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_SUBJECT, zipFile.name)
+            putExtra(Intent.EXTRA_TEXT, "Exported UICapture archive: ${zipFile.name} (${GalleryLogic.formatFileSize(zipFile.length())})")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val chooser = Intent.createChooser(intent, chooserTitle).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(chooser)
+        Toast.makeText(context, "Exported: ${zipFile.name}", Toast.LENGTH_LONG).show()
+    } catch (e: Throwable) {
+        Toast.makeText(context, "Failed to share archive: ${e.message}", Toast.LENGTH_SHORT).show()
     }
 }

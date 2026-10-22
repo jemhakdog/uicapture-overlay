@@ -220,4 +220,101 @@ object GalleryLogic {
             else -> String.format(Locale.US, "%.1f MB", bytes / (1024.0 * 1024.0))
         }
     }
+
+    /**
+     * Groups a list of capture sessions by their target package name into [AppCaptureGroup]s,
+     * sorted by the latest capture timestamp descending.
+     */
+    fun groupSessionsByApp(sessions: List<CaptureSessionItem>): List<AppCaptureGroup> {
+        return sessions
+            .groupBy { it.packageName }
+            .map { (pkg, appSessions) ->
+                AppCaptureGroup(
+                    packageName = pkg,
+                    sessions = appSessions.sortedByDescending { it.timestamp }
+                )
+            }
+            .sortedByDescending { it.latestTimestamp }
+    }
+
+    /**
+     * Filters list of [AppCaptureGroup]s by query matching package name, app name, or activity names.
+     */
+    fun filterAppGroups(groups: List<AppCaptureGroup>, query: String): List<AppCaptureGroup> {
+        if (query.isBlank()) return groups
+        val q = query.trim().lowercase(Locale.ROOT)
+        return groups.filter { group ->
+            group.packageName.lowercase(Locale.ROOT).contains(q) ||
+                    group.appName.lowercase(Locale.ROOT).contains(q) ||
+                    group.sessions.any { it.activityName?.lowercase(Locale.ROOT)?.contains(q) == true }
+        }
+    }
+
+    /**
+     * Packages all files in the given [sessions] into a single ZIP archive.
+     * Preserves directory names as top-level folders in the ZIP (e.g. `cap_<ts>_<pkg>/screenshot.png`).
+     */
+    fun createZipArchive(sessions: List<CaptureSessionItem>, zipFile: File): File {
+        val parent = zipFile.parentFile
+        if (parent != null && !parent.exists()) {
+            parent.mkdirs()
+        }
+
+        java.util.zip.ZipOutputStream(java.io.FileOutputStream(zipFile)).use { zos ->
+            val buffer = ByteArray(8192)
+            for (session in sessions) {
+                val dir = session.directory
+                if (!dir.exists() || !dir.isDirectory) continue
+                val dirName = dir.name
+                dir.listFiles()?.forEach { file ->
+                    if (file.isFile && file.length() > 0 && !file.name.endsWith(".zip")) {
+                        val entryName = "$dirName/${file.name}"
+                        val entry = java.util.zip.ZipEntry(entryName).apply {
+                            time = file.lastModified()
+                        }
+                        zos.putNextEntry(entry)
+                        file.inputStream().use { input ->
+                            var read: Int
+                            while (input.read(buffer).also { read = it } != -1) {
+                                zos.write(buffer, 0, read)
+                            }
+                        }
+                        zos.closeEntry()
+                    }
+                }
+            }
+        }
+        return zipFile
+    }
+
+    /**
+     * Creates a timestamped export ZIP containing all capture sessions.
+     */
+    fun exportAllToZip(baseDir: File, sessions: List<CaptureSessionItem>): File {
+        val timestamp = System.currentTimeMillis()
+        val zipFile = File(baseDir, "UICapture_All_${timestamp}.zip")
+        return createZipArchive(sessions, zipFile)
+    }
+
+    /**
+     * Creates a timestamped export ZIP containing all capture sessions for a specific app.
+     */
+    fun exportAppToZip(packageName: String, baseDir: File, sessions: List<CaptureSessionItem>): File {
+        val sanitizedPkg = packageName.ifBlank { "unknown" }.replace(".", "_")
+        val timestamp = System.currentTimeMillis()
+        val zipFile = File(baseDir, "UICapture_${sanitizedPkg}_${timestamp}.zip")
+        return createZipArchive(sessions, zipFile)
+    }
 }
+
+/**
+ * Data class representing an application group containing all its captured sessions.
+ */
+data class AppCaptureGroup(
+    val packageName: String,
+    val appName: String = packageName.substringAfterLast(".").replaceFirstChar { it.uppercase() },
+    val sessions: List<CaptureSessionItem>,
+    val latestTimestamp: Long = sessions.maxOfOrNull { it.timestamp } ?: 0L,
+    val totalElements: Int = sessions.sumOf { it.elementCount },
+    val screenshotCount: Int = sessions.count { it.hasScreenshot }
+)

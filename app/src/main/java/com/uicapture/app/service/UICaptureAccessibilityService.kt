@@ -405,9 +405,21 @@ class UICaptureAccessibilityService : AccessibilityService() {
                             val hardwareBuffer = screenshotResult.hardwareBuffer
                             val colorSpace = screenshotResult.colorSpace
                             try {
-                                val hwBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
+                                val hwBitmap = try {
+                                    Bitmap.wrapHardwareBuffer(hardwareBuffer, colorSpace)
+                                } catch (_: Throwable) {
+                                    try {
+                                        Bitmap.wrapHardwareBuffer(hardwareBuffer, android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB))
+                                    } catch (_: Throwable) {
+                                        null
+                                    }
+                                }
                                 if (hwBitmap != null) {
-                                    val copy = hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                    val copy = try {
+                                        hwBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                                    } catch (_: Throwable) {
+                                        null
+                                    }
                                     if (copy != null && copy != hwBitmap) {
                                         hwBitmap.recycle()
                                     }

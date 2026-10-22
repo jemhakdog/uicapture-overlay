@@ -373,4 +373,124 @@ class GalleryLogicTest {
         assertEquals("Dashboard", com.uicapture.app.ui.AppScreen.DASHBOARD.label)
         assertEquals("Gallery", com.uicapture.app.ui.AppScreen.GALLERY.label)
     }
+
+    @Test
+    fun testGroupSessionsByApp() {
+        val baseDir = tempFolder.newFolder("group_test")
+        val dir1 = File(baseDir, "cap_100_youtube").apply { mkdirs() }
+        val dir2 = File(baseDir, "cap_200_youtube").apply { mkdirs() }
+        val dir3 = File(baseDir, "cap_300_jobstreet").apply { mkdirs() }
+
+        val s1 = CaptureSessionItem(
+            captureId = "s1",
+            timestamp = 100L,
+            packageName = "com.google.android.youtube",
+            elementCount = 10,
+            directory = dir1
+        )
+        val s2 = CaptureSessionItem(
+            captureId = "s2",
+            timestamp = 200L,
+            packageName = "com.google.android.youtube",
+            elementCount = 20,
+            directory = dir2
+        )
+        val s3 = CaptureSessionItem(
+            captureId = "s3",
+            timestamp = 300L,
+            packageName = "com.jobstreet.jobstreet",
+            elementCount = 30,
+            directory = dir3
+        )
+
+        val groups = GalleryLogic.groupSessionsByApp(listOf(s1, s2, s3))
+        assertEquals(2, groups.size)
+
+        // Jobstreet has newest timestamp (300L), so it should be first
+        assertEquals("com.jobstreet.jobstreet", groups[0].packageName)
+        assertEquals("Jobstreet", groups[0].appName)
+        assertEquals(1, groups[0].sessions.size)
+        assertEquals(30, groups[0].totalElements)
+
+        // YouTube has 2 sessions, sorted descending
+        assertEquals("com.google.android.youtube", groups[1].packageName)
+        assertEquals("Youtube", groups[1].appName)
+        assertEquals(2, groups[1].sessions.size)
+        assertEquals(200L, groups[1].sessions[0].timestamp)
+        assertEquals(100L, groups[1].sessions[1].timestamp)
+        assertEquals(30, groups[1].totalElements)
+    }
+
+    @Test
+    fun testFilterAppGroups() {
+        val baseDir = tempFolder.newFolder("filter_group_test")
+        val s1 = CaptureSessionItem(
+            captureId = "s1",
+            timestamp = 100L,
+            packageName = "com.google.android.youtube",
+            activityName = "WatchActivity",
+            directory = File(baseDir, "s1").apply { mkdirs() }
+        )
+        val s2 = CaptureSessionItem(
+            captureId = "s2",
+            timestamp = 200L,
+            packageName = "com.jobstreet.jobstreet",
+            activityName = "SearchActivity",
+            directory = File(baseDir, "s2").apply { mkdirs() }
+        )
+
+        val groups = GalleryLogic.groupSessionsByApp(listOf(s1, s2))
+
+        val filteredByName = GalleryLogic.filterAppGroups(groups, "youtube")
+        assertEquals(1, filteredByName.size)
+        assertEquals("com.google.android.youtube", filteredByName[0].packageName)
+
+        val filteredByActivity = GalleryLogic.filterAppGroups(groups, "search")
+        assertEquals(1, filteredByActivity.size)
+        assertEquals("com.jobstreet.jobstreet", filteredByActivity[0].packageName)
+
+        val emptyFilter = GalleryLogic.filterAppGroups(groups, "")
+        assertEquals(2, emptyFilter.size)
+    }
+
+    @Test
+    fun testCreateZipArchiveAndExport() {
+        val baseDir = tempFolder.newFolder("zip_test")
+        val sessionDir = File(baseDir, "cap_123_test_app").apply { mkdirs() }
+        File(sessionDir, "hierarchy.json").writeText("{\"test\": true}")
+        File(sessionDir, "hierarchy.xml").writeText("<node/>")
+        File(sessionDir, "summary.json").writeText("{\"count\": 1}")
+
+        val session = CaptureSessionItem(
+            captureId = "cap_123",
+            timestamp = 123L,
+            packageName = "com.test.app",
+            directory = sessionDir
+        )
+
+        val zipFile = File(baseDir, "test_export.zip")
+        GalleryLogic.createZipArchive(listOf(session), zipFile)
+
+        assertTrue(zipFile.exists())
+        assertTrue(zipFile.length() > 0)
+
+        // Verify ZIP contents using java.util.zip.ZipFile
+        java.util.zip.ZipFile(zipFile).use { zip ->
+            val entries = zip.entries().asSequence().map { it.name }.toSet()
+            assertTrue(entries.contains("cap_123_test_app/hierarchy.json"))
+            assertTrue(entries.contains("cap_123_test_app/hierarchy.xml"))
+            assertTrue(entries.contains("cap_123_test_app/summary.json"))
+        }
+
+        // Test exportAllToZip and exportAppToZip
+        val allZip = GalleryLogic.exportAllToZip(baseDir, listOf(session))
+        assertTrue(allZip.exists())
+        assertTrue(allZip.name.startsWith("UICapture_All_"))
+        assertTrue(allZip.name.endsWith(".zip"))
+
+        val appZip = GalleryLogic.exportAppToZip("com.test.app", baseDir, listOf(session))
+        assertTrue(appZip.exists())
+        assertTrue(appZip.name.startsWith("UICapture_com_test_app_"))
+        assertTrue(appZip.name.endsWith(".zip"))
+    }
 }
