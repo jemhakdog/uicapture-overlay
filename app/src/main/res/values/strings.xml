@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">UICapture Overlay</string>
+    <string name="accessibility_service_desc">Enables UI hierarchy inspection and instant screen capture for UI analysis</string>
+    <string name="notification_channel_name">UICapture Overlay Service</string>
+    <string name="notification_channel_desc">Active foreground service keeping the floating capture overlay bubble responsive</string>
+</resources>

@@ -1,0 +1,121 @@
+name: Build UICapture Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - '**'
+  release:
+    types:
+      - published
+
+jobs:
+  build-apk:
+    name: Build & Package APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: 'gradle'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+
+      - name: Ensure Gradlew Executable
+        run: chmod +x gradlew
+
+      - name: Ensure Persistent Signing Keystore
+        run: |
+          if [ ! -f app/uicapture.keystore ]; then
+            echo "Generating persistent keystore for consistent release signatures..."
+            keytool -genkeypair -v -keystore app/uicapture.keystore \
+              -alias uicapturekey -storepass uicapturepass -keypass uicapturepass \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=UICapture,OU=Mobile,O=UICapture,C=US"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add app/uicapture.keystore
+            git commit -m "chore(ci): persist signing keystore for consistent app updates [skip ci]" || true
+            git push origin HEAD || true
+          fi
+
+      - name: Build Android APKs
+        run: |
+          ./gradlew test assembleDebug assembleRelease --no-daemon --stacktrace
+
+      - name: Prepare Direct Unzipped APKs
+        run: |
+          mkdir -p dist
+          DEBUG_APK=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          if [ -f "$DEBUG_APK" ]; then
+            cp "$DEBUG_APK" dist/UICapture-debug.apk
+          fi
+          RELEASE_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          if [ -f "$RELEASE_APK" ]; then
+            cp "$RELEASE_APK" dist/UICapture-release.apk
+          fi
+          echo "Prepared APKs for release:"
+          ls -la dist/
+
+      - name: Upload APKs as Run Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: UICapture-APKs-build-${{ github.run_number }}
+          path: dist/*.apk
+          retention-days: 30
+
+      - name: Publish Direct APK Release for Every Build
+        if: github.event_name != 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0-build.${{ github.run_number }}
+          name: UICapture Build #${{ github.run_number }} (Direct APK)
+          make_latest: true
+          body: |
+            ### UICapture Build #${{ github.run_number }}
+            - **Commit:** `${{ github.sha }}`
+            - **Branch:** `${{ github.ref_name }}`
+
+            #### Direct Raw APK Downloads (Not Zipped)
+            Click to download the `.apk` directly to your phone without extracting any zip file:
+            - [UICapture-debug.apk](https://github.com/${{ github.repository }}/releases/download/v0.1.0-build.${{ github.run_number }}/UICapture-debug.apk)
+            - [UICapture-release.apk](https://github.com/${{ github.repository }}/releases/download/v0.1.0-build.${{ github.run_number }}/UICapture-release.apk)
+          prerelease: false
+          files: dist/*.apk
+
+      - name: Update Continuous Rolling Release
+        if: github.event_name != 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: continuous
+          name: Latest Build (Direct Unzipped APK)
+          body: |
+            Latest direct unzipped APK from commit `${{ github.sha }}` on branch `${{ github.ref_name }}`.
+
+            - [Download UICapture-debug.apk](https://github.com/${{ github.repository }}/releases/download/continuous/UICapture-debug.apk)
+            - [Download UICapture-release.apk](https://github.com/${{ github.repository }}/releases/download/continuous/UICapture-release.apk)
+          prerelease: true
+          files: dist/*.apk
+
+      - name: Direct APK Summary
+        run: |
+          echo "### 🚀 Unzipped Direct APK Downloads" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Direct raw APKs published (no zip extraction needed):" >> $GITHUB_STEP_SUMMARY
+          echo "- 📱 [Download UICapture-debug.apk](https://github.com/${{ github.repository }}/releases/download/v0.1.0-build.${{ github.run_number }}/UICapture-debug.apk)" >> $GITHUB_STEP_SUMMARY
+          echo "- 📱 [Download UICapture-release.apk](https://github.com/${{ github.repository }}/releases/download/v0.1.0-build.${{ github.run_number }}/UICapture-release.apk)" >> $GITHUB_STEP_SUMMARY
+          echo "- 📦 [View All GitHub Releases](https://github.com/${{ github.repository }}/releases)" >> $GITHUB_STEP_SUMMARY
