@@ -376,6 +376,7 @@ class FloatingOverlayController(
                 incrementCounter()
                 val message = OverlayMath.formatSuccessToast(data.elementCount, data.packageName)
                 toastDisplayer(message)
+                bubbleContainer?.let { pulseAnimator(it) } ?: rootView?.let { pulseAnimator(it) }
             },
             { errorMessage ->
                 val displayError = if (errorMessage.contains(UICaptureAccessibilityService.ERROR_SERVICE_NOT_RUNNING)) {
@@ -392,6 +393,11 @@ class FloatingOverlayController(
      * Touch event entry point handling touch down gesture.
      */
     internal fun handleTouchDown(rawX: Float, rawY: Float) {
+        try {
+            snapAnimator?.cancel()
+        } catch (_: Throwable) {
+            // Safe ignore
+        }
         touchDownRawX = rawX
         touchDownRawY = rawY
         initialParamX = layoutParams.x
@@ -420,7 +426,7 @@ class FloatingOverlayController(
     }
 
     /**
-     * Touch event entry point handling touch release (UP/CANCEL) gesture.
+     * Touch event entry point handling touch release (ACTION_UP) gesture.
      * Triggers capture tap if movement remained under [touchSlop], or snaps to the nearest
      * edge if dragging was in progress.
      *
@@ -434,6 +440,19 @@ class FloatingOverlayController(
             snapToEdge()
             false
         }
+    }
+
+    /**
+     * Touch event entry point handling touch cancellation (ACTION_CANCEL).
+     * Resets touch tracking cleanly without invoking capture tap.
+     */
+    internal fun handleTouchCancel() {
+        if (isDragging) {
+            snapToEdge()
+        }
+        isDragging = false
+        touchDownRawX = 0f
+        touchDownRawY = 0f
     }
 
     /**
@@ -574,8 +593,12 @@ class FloatingOverlayController(
                     handleTouchMove(event.rawX, event.rawY)
                     true
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                MotionEvent.ACTION_UP -> {
                     handleTouchUp()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    handleTouchCancel()
                     true
                 }
                 else -> false

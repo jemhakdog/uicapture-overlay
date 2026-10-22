@@ -271,7 +271,7 @@ class FloatingOverlayControllerTest {
     @Test
     fun testPerformCaptureTapSuccessFlow() {
         var hapticCalled = false
-        var pulseCalled = false
+        var pulseCount = 0
         var displayedToast: String? = null
 
         val sampleData = ScreenCaptureData(
@@ -289,7 +289,7 @@ class FloatingOverlayControllerTest {
 
         val controller = FloatingOverlayController().apply {
             hapticFeedbackProvider = { hapticCalled = true }
-            pulseAnimator = { pulseCalled = true }
+            pulseAnimator = { pulseCount++ }
             toastDisplayer = { msg -> displayedToast = msg }
             captureTrigger = { onSuccess, _ ->
                 onSuccess(sampleData, null)
@@ -299,6 +299,7 @@ class FloatingOverlayControllerTest {
         controller.performCaptureTap()
 
         assertTrue("Haptic feedback must be triggered on capture tap", hapticCalled)
+        assertEquals("Pulse animation must be triggered on immediate tap and again on capture completion", 2, pulseCount)
         assertEquals("Capture counter must increment on successful capture", 1, controller.captureCount)
         assertEquals(
             "Toast must display formatted capture element count and package name",
@@ -343,7 +344,7 @@ class FloatingOverlayControllerTest {
 
         assertEquals(0, controller.captureCount)
         assertEquals(
-            "Capture error: Active window root node is null or inaccessible.",
+            "Capture failed: Active window root node is null or inaccessible.",
             displayedToast
         )
     }
@@ -470,6 +471,48 @@ class FloatingOverlayControllerTest {
 
         assertEquals(20, animatedTargetX)
         assertEquals(20, controller.layoutParams.x)
+    }
+
+    @Test
+    fun testTouchCancelWhenNotDraggingDoesNotPerformCapture() {
+        var captureTapExecuted = false
+        val controller = FloatingOverlayController().apply {
+            captureTrigger = { _, _ -> captureTapExecuted = true }
+        }
+
+        controller.handleTouchDown(100f, 100f)
+        controller.handleTouchCancel()
+
+        assertFalse("Capture tap must NOT be executed on touch cancel", captureTapExecuted)
+        assertFalse(controller.isDragging)
+        assertEquals(0f, controller.touchDownRawX, 0.001f)
+        assertEquals(0f, controller.touchDownRawY, 0.001f)
+        assertEquals(0, controller.captureCount)
+    }
+
+    @Test
+    fun testTouchCancelWhenDraggingSnapsToEdge() {
+        var captureTapExecuted = false
+        val controller = FloatingOverlayController(initialX = 100, initialY = 300).apply {
+            touchSlop = 16f
+            screenSizeProvider = { Pair(1080, 2400) }
+            defaultMargin = 20
+            defaultViewWidth = 160
+            defaultViewHeight = 160
+            captureTrigger = { _, _ -> captureTapExecuted = true }
+        }
+
+        controller.handleTouchDown(100f, 100f)
+        controller.handleTouchMove(160f, 100f) // dx = 60 > 16 -> isDragging = true
+        assertTrue(controller.isDragging)
+
+        controller.handleTouchCancel()
+
+        assertFalse("Capture tap must NOT be executed on touch cancel", captureTapExecuted)
+        assertFalse("isDragging must be reset after cancel", controller.isDragging)
+        // Center is 160 + 80 = 240 < 540 -> snapped to left margin 20
+        assertEquals(20, controller.layoutParams.x)
+        assertEquals(0, controller.captureCount)
     }
 
     // =========================================================================
